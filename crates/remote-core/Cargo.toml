@@ -1,0 +1,12 @@
+[package]
+name = "remote-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Platform-agnostic core logic for tg-media-remote"
+keywords = ["telegram", "bot", "media"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = { version = "0.8", features = ["parse"] }

@@ -1,0 +1,11 @@
+[package]
+name = "remote-os"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Linux playerctl integration for tg-media-remote"
+keywords = ["playerctl", "mpris", "linux", "media"]
+categories = ["command-line-utilities", "os::linux-apis"]
+
+[dependencies]
+remote-core = { path = "../remote-core" }

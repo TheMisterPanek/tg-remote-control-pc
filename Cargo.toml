@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/remote-core", "crates/remote-os"]
+resolver = "2"
+
+[package]
+name = "tg-media-remote"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Telegram bot that controls media playback on Linux via playerctl"
+keywords = ["telegram", "bot", "media", "playerctl", "mpris"]
+categories = ["command-line-utilities", "multimedia"]
+readme = "README.md"
+
+[[bin]]
+name = "tg-media-remote"
+path = "src/main.rs"
+
+[dependencies]
+remote-core = { path = "crates/remote-core" }
+remote-os = { path = "crates/remote-os" }
