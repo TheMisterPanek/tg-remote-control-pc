@@ -86,37 +86,38 @@ mock.previous_call_count() // usize
 
 ### Step 3 — Teloxide handler pipeline + whitelist dispatch `remote-core/src/bot/`
 
-**Status: Pending**
+**Status: Complete**
 
 #### Deliverables
 - `src/bot/mod.rs` — module root, exports dispatcher builder
-- `src/bot/handler.rs` — command handlers generic over `T: MediaController`
-- `src/bot/dispatch.rs` — middleware that enforces whitelist before any handler runs
-- `src/main.rs` updated — wires `Config`, `MockMediaController`/OS controller, dispatcher
+- `src/bot/command.rs` — `BotCommand` enum with case-insensitive parser
+- `src/bot/dispatch.rs` — pure `dispatch()` function enforcing whitelist before any handler runs
+- `src/main.rs` updated — composition root stub (wiring deferred to Step 5)
 
 #### Behaviour spec
 - Authorized user sends `/player` → handler is invoked, bot replies
 - Unauthorized user sends any message → silently dropped; zero handler calls; zero outbound Telegram API calls
 - Handler calls the correct `MediaController` method and returns the result to the user
 
-#### Test coverage (planned)
-- [ ] Authorized user triggers the handler
-- [ ] Unauthorized user produces zero `MockMediaController` calls
-- [ ] Unauthorized user produces zero bot replies
-- [ ] Multiple authorized users each trigger independently
-- [ ] Handler propagates controller errors as user-facing messages
+#### Test coverage
+- [x] Authorized user triggers the handler
+- [x] Unauthorized user produces zero `MockMediaController` calls
+- [x] Unauthorized user produces zero bot replies
+- [x] Multiple authorized users each trigger independently
+- [x] Handler propagates controller errors as user-facing messages
 
 ---
 
 ### Step 4 — `/player` UI formatting + inline keyboard + callbacks `remote-core/src/bot/`
 
-**Status: Pending**
+**Status: Complete**
 
 #### Deliverables
 - `/player` reply formatter: renders `MediaStatus` and `MediaMetadata` into a human-readable message
 - Inline keyboard builder: three buttons — ⏮ Previous, ⏯ Play/Pause, ⏭ Next
 - Callback query handler: maps each button press to the correct `MediaController` method
 - State-transition rendering: after a button press, the message reflects the new `MediaStatus`
+- Single persistent player message per chat (adapter state in `main.rs`)
 
 #### Behaviour spec
 - `/player` command displays current track info with inline keyboard
@@ -124,15 +125,25 @@ mock.previous_call_count() // usize
 - Pressing ⏭ calls `next`; state refreshed
 - Pressing ⏮ calls `previous`; state refreshed
 - Error responses from the controller are shown as human-friendly messages, not panics
+- **Single-message rule:** the bot keeps exactly one player message per chat. On every command or callback, the adapter deletes the user's incoming message and either edits the existing bot message (if one is stored for that chat) or sends a new one and stores its ID. This prevents chat clutter regardless of how many commands are issued.
 
-#### Test coverage (planned)
-- [ ] `/player` output contains title, artist, and status
-- [ ] Inline keyboard contains all three buttons with correct callback data
-- [ ] ⏯ callback invokes `toggle_play_pause` exactly once
-- [ ] ⏭ callback invokes `next` exactly once
-- [ ] ⏮ callback invokes `previous` exactly once
-- [ ] State transitions: Playing → Paused → Playing
-- [ ] Controller error is surfaced as a user-facing message
+#### Adapter state (`main.rs`)
+- `Arc<Mutex<HashMap<ChatId, MessageId>>>` — last player message ID per chat
+- On command: delete user message → compute reply → edit stored message or send new one → store new ID
+- On callback: answer callback query → edit the existing message in place → no new messages sent
+
+#### Test coverage
+- [x] `/player` output contains title, artist, and status
+- [x] `/player` output contains album when present
+- [x] Inline keyboard contains all three buttons with correct callback data
+- [x] ⏯ callback invokes `toggle_play_pause` exactly once
+- [x] ⏭ callback invokes `next` exactly once
+- [x] ⏮ callback invokes `previous` exactly once
+- [x] State transitions: Playing → Paused → Playing
+- [x] Controller error is surfaced as a user-facing message
+- [ ] Second `/player` command edits the existing message, does not send a new one (deferred to Step 5 — requires teloxide wiring)
+- [ ] Button press edits the existing message, does not send a new one (deferred to Step 5)
+- [ ] User's command message is deleted after processing (deferred to Step 5)
 
 ---
 
@@ -204,6 +215,6 @@ src/main.rs  (composition root)
 |------|-------------|--------|
 | 1 | Config parser + whitelist validation | Complete |
 | 2 | `MockMediaController` spy | Complete |
-| 3 | Handler pipeline + whitelist dispatch | Pending |
-| 4 | `/player` UI + inline keyboard + callbacks | Pending |
+| 3 | Handler pipeline + whitelist dispatch | Complete |
+| 4 | `/player` UI + inline keyboard + callbacks | Complete |
 | 5 | `remote-os` playerctl integration | Pending |

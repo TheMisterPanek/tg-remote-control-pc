@@ -1,7 +1,9 @@
 use crate::bot::command::BotCommand;
+use crate::bot::ui::{format_player_reply, format_status, PlayerReply};
 use crate::config::Config;
 use crate::media::controller::MediaController;
-use crate::media::types::MediaStatus;
+
+pub use crate::bot::callback::CallbackAction;
 
 // ── Result type ───────────────────────────────────────────────────────────────
 
@@ -9,10 +11,13 @@ use crate::media::types::MediaStatus;
 ///
 /// `Ignored` means the caller must make zero outbound API calls.
 /// `Reply` means the caller should send the contained text back to the user.
+/// `PlayerReply` means the caller should send/edit the player message with the
+/// given text and inline keyboard.
 #[derive(Debug, PartialEq)]
 pub enum DispatchResult {
     Ignored,
     Reply(String),
+    PlayerReply(PlayerReply),
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -32,35 +37,51 @@ pub fn dispatch(
     if !config.is_allowed(user_id) {
         return DispatchResult::Ignored;
     }
-    DispatchResult::Reply(handle(command, controller))
+    handle(command, controller)
 }
 
-fn handle(command: &BotCommand, controller: &dyn MediaController) -> String {
+fn handle(command: &BotCommand, controller: &dyn MediaController) -> DispatchResult {
     match command {
         BotCommand::Play => match controller.toggle_play_pause() {
-            Ok(status) => format_status(status),
-            Err(msg) => format!("Error: {msg}"),
+            Ok(status) => DispatchResult::Reply(format_status(&status).to_string()),
+            Err(msg) => DispatchResult::Reply(format!("Error: {msg}")),
         },
         BotCommand::Next => match controller.next() {
-            Ok(()) => "Skipped to next track.".to_string(),
-            Err(msg) => format!("Error: {msg}"),
+            Ok(()) => DispatchResult::Reply("Skipped to next track.".to_string()),
+            Err(msg) => DispatchResult::Reply(format!("Error: {msg}")),
         },
         BotCommand::Previous => match controller.previous() {
-            Ok(()) => "Went back to previous track.".to_string(),
-            Err(msg) => format!("Error: {msg}"),
+            Ok(()) => DispatchResult::Reply("Went back to previous track.".to_string()),
+            Err(msg) => DispatchResult::Reply(format!("Error: {msg}")),
         },
         BotCommand::Player => match controller.get_current_state() {
-            Ok((status, _meta)) => format!("Status: {}", format_status(status)),
-            Err(msg) => format!("Error: {msg}"),
+            Ok((status, meta)) => {
+                DispatchResult::PlayerReply(format_player_reply(status, meta))
+            }
+            Err(msg) => DispatchResult::Reply(format!("Error: {msg}")),
         },
     }
 }
 
-fn format_status(status: MediaStatus) -> String {
-    match status {
-        MediaStatus::Playing => "Playing".to_string(),
-        MediaStatus::Paused  => "Paused".to_string(),
-        MediaStatus::Stopped => "Stopped".to_string(),
+/// Execute a `CallbackAction` against the controller and return a refreshed player reply.
+///
+/// Called by `dispatch_callback` in `callback.rs` after authorization and
+/// callback-data parsing have already been validated.
+pub(crate) fn dispatch_callback_action(
+    action: &CallbackAction,
+    controller: &dyn MediaController,
+) -> DispatchResult {
+    let action_result = match action {
+        CallbackAction::TogglePlayPause => controller.toggle_play_pause().map(|_| ()),
+        CallbackAction::Next => controller.next(),
+        CallbackAction::Previous => controller.previous(),
+    };
+    if let Err(msg) = action_result {
+        return DispatchResult::Reply(format!("Error: {msg}"));
+    }
+    match controller.get_current_state() {
+        Ok((status, meta)) => DispatchResult::PlayerReply(format_player_reply(status, meta)),
+        Err(msg) => DispatchResult::Reply(format!("Error: {msg}")),
     }
 }
 
@@ -79,6 +100,15 @@ mod tests {
 
     fn mock() -> MockMediaController {
         MockMediaController::new()
+    }
+
+    fn rich_meta() -> MediaMetadata {
+        MediaMetadata {
+            title: "Bohemian Rhapsody".to_string(),
+            artist: "Queen".to_string(),
+            album: None,
+            art_url: None,
+        }
     }
 
     // ── Authorization gate ─────────────────────────────────────────────────────
@@ -153,11 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn authorized_user_player_command_returns_reply() {
+    fn authorized_user_player_command_returns_player_reply_variant() {
         let cfg = allowed(vec![111111111]);
         let m = mock();
+        m.set_state_result(Ok((MediaStatus::Playing, rich_meta())));
         let result = dispatch(111111111, &BotCommand::Player, &cfg, &m);
-        assert!(matches!(result, DispatchResult::Reply(_)));
+        assert!(matches!(result, DispatchResult::PlayerReply(_)));
     }
 
     #[test]
@@ -233,7 +264,8 @@ mod tests {
         let cfg = allowed(vec![111111111]);
         let m = mock();
         m.set_previous_result(Err("No players found".to_string()));
-        let DispatchResult::Reply(text) = dispatch(111111111, &BotCommand::Previous, &cfg, &m) else {
+        let DispatchResult::Reply(text) = dispatch(111111111, &BotCommand::Previous, &cfg, &m)
+        else {
             panic!("expected Reply");
         };
         assert!(text.contains("No players found"), "reply was: {text}");
@@ -267,24 +299,43 @@ mod tests {
         assert_eq!(m.previous_call_count(), 0);
     }
 
-    // ── Player command formats state ───────────────────────────────────────────
+    // ── Player command returns rich PlayerReply ────────────────────────────────
 
     #[test]
-    fn player_command_reply_contains_status() {
+    fn player_command_player_reply_contains_title() {
         let cfg = allowed(vec![111111111]);
         let m = mock();
-        m.set_state_result(Ok((
-            MediaStatus::Playing,
-            MediaMetadata {
-                title: "Song".to_string(),
-                artist: "Artist".to_string(),
-                album: None,
-                art_url: None,
-            },
-        )));
-        let DispatchResult::Reply(text) = dispatch(111111111, &BotCommand::Player, &cfg, &m) else {
-            panic!("expected Reply");
+        m.set_state_result(Ok((MediaStatus::Playing, rich_meta())));
+        let DispatchResult::PlayerReply(reply) =
+            dispatch(111111111, &BotCommand::Player, &cfg, &m)
+        else {
+            panic!("expected PlayerReply");
         };
-        assert!(text.contains("Playing"), "reply was: {text}");
+        assert!(reply.text.contains("Bohemian Rhapsody"), "text was: {}", reply.text);
+    }
+
+    #[test]
+    fn player_command_player_reply_contains_artist() {
+        let cfg = allowed(vec![111111111]);
+        let m = mock();
+        m.set_state_result(Ok((MediaStatus::Playing, rich_meta())));
+        let DispatchResult::PlayerReply(reply) =
+            dispatch(111111111, &BotCommand::Player, &cfg, &m)
+        else {
+            panic!("expected PlayerReply");
+        };
+        assert!(reply.text.contains("Queen"), "text was: {}", reply.text);
+    }
+
+    #[test]
+    fn player_command_error_returns_reply_not_player_reply() {
+        let cfg = allowed(vec![111111111]);
+        let m = mock();
+        m.set_state_result(Err("No players found".to_string()));
+        let result = dispatch(111111111, &BotCommand::Player, &cfg, &m);
+        assert!(
+            matches!(result, DispatchResult::Reply(_)),
+            "expected Reply on error, got: {result:?}"
+        );
     }
 }

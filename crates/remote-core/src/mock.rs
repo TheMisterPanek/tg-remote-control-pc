@@ -18,6 +18,7 @@ pub struct MockMediaController {
     toggle_calls: AtomicUsize,
     next_calls: AtomicUsize,
     previous_calls: AtomicUsize,
+    state_calls: AtomicUsize,
 }
 
 impl MockMediaController {
@@ -38,6 +39,7 @@ impl MockMediaController {
             toggle_calls: AtomicUsize::new(0),
             next_calls: AtomicUsize::new(0),
             previous_calls: AtomicUsize::new(0),
+            state_calls: AtomicUsize::new(0),
         }
     }
 
@@ -68,6 +70,10 @@ impl MockMediaController {
     pub fn previous_call_count(&self) -> usize {
         self.previous_calls.load(Ordering::SeqCst)
     }
+
+    pub fn state_call_count(&self) -> usize {
+        self.state_calls.load(Ordering::SeqCst)
+    }
 }
 
 impl Default for MockMediaController {
@@ -93,6 +99,7 @@ impl MediaController for MockMediaController {
     }
 
     fn get_current_state(&self) -> Result<(MediaStatus, MediaMetadata), String> {
+        self.state_calls.fetch_add(1, Ordering::SeqCst);
         self.state_result.lock().unwrap().clone()
     }
 }
