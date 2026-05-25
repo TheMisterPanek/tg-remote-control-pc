@@ -19,3 +19,5 @@ path = "src/main.rs"
 [dependencies]
 remote-core = { path = "crates/remote-core" }
 remote-os = { path = "crates/remote-os" }
+teloxide = { version = "0.13", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

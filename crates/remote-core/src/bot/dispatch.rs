@@ -95,7 +95,7 @@ mod tests {
     use crate::mock::MockMediaController;
 
     fn allowed(ids: Vec<i64>) -> Config {
-        Config { allowed_users: ids }
+        Config { token: "t".to_string(), allowed_users: ids }
     }
 
     fn mock() -> MockMediaController {

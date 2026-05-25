@@ -65,7 +65,7 @@ mod tests {
     use crate::mock::MockMediaController;
 
     fn cfg(ids: Vec<i64>) -> Config {
-        Config { allowed_users: ids }
+        Config { token: "t".to_string(), allowed_users: ids }
     }
 
     fn meta(title: &str) -> MediaMetadata {

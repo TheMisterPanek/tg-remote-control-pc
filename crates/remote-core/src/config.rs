@@ -7,6 +7,8 @@ use std::fmt;
 pub enum ConfigError {
     /// The TOML source could not be parsed at all.
     ParseError(String),
+    /// The `token` key is absent from the file.
+    MissingToken,
     /// The `allowed_users` key is absent from the file.
     MissingWhitelist,
     /// The `allowed_users` array is present but contains no entries.
@@ -17,6 +19,9 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConfigError::ParseError(msg) => write!(f, "TOML parse error: {msg}"),
+            ConfigError::MissingToken => {
+                write!(f, "config error: `token` key is missing")
+            }
             ConfigError::MissingWhitelist => {
                 write!(f, "config error: `allowed_users` key is missing")
             }
@@ -31,10 +36,11 @@ impl std::error::Error for ConfigError {}
 
 // ── Internal raw deserialization target ───────────────────────────────────────
 
-/// Intermediate struct that accepts an optional `allowed_users` so we can
-/// distinguish *missing* from *empty* after parsing.
+/// Intermediate struct that accepts optional fields so we can produce distinct
+/// errors for missing vs empty values.
 #[derive(Deserialize)]
 struct RawConfig {
+    token: Option<String>,
     allowed_users: Option<Vec<i64>>,
 }
 
@@ -42,6 +48,8 @@ struct RawConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    /// Telegram bot token obtained from @BotFather.
+    pub token: String,
     /// Non-empty list of Telegram user IDs allowed to operate the bot.
     pub allowed_users: Vec<i64>,
 }
@@ -57,11 +65,15 @@ impl Config {
         let raw: RawConfig = toml::from_str(content)
             .map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
-        match raw.allowed_users {
-            None => Err(ConfigError::MissingWhitelist),
-            Some(users) if users.is_empty() => Err(ConfigError::EmptyWhitelist),
-            Some(users) => Ok(Config { allowed_users: users }),
-        }
+        let token = raw.token.ok_or(ConfigError::MissingToken)?;
+
+        let users = match raw.allowed_users {
+            None => return Err(ConfigError::MissingWhitelist),
+            Some(u) if u.is_empty() => return Err(ConfigError::EmptyWhitelist),
+            Some(u) => u,
+        };
+
+        Ok(Config { token, allowed_users: users })
     }
 
     /// Returns `true` if the given Telegram user ID is in the whitelist.
@@ -77,19 +89,25 @@ impl Config {
 mod tests {
     use super::*;
 
+    const TOK: &str = r#"token = "test-token""#;
+
+    fn with_token(rest: &str) -> String {
+        format!("{TOK}\n{rest}")
+    }
+
     // ── Parsing: valid inputs ──────────────────────────────────────────────────
 
     #[test]
     fn single_user_is_accepted() {
-        let toml = r#"allowed_users = [111111111]"#;
-        let cfg = Config::from_toml(toml).expect("should parse");
+        let toml = with_token("allowed_users = [111111111]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
         assert_eq!(cfg.allowed_users, vec![111111111_i64]);
     }
 
     #[test]
     fn multiple_users_are_accepted() {
-        let toml = r#"allowed_users = [111111111, 222222222, 333333333]"#;
-        let cfg = Config::from_toml(toml).expect("should parse");
+        let toml = with_token("allowed_users = [111111111, 222222222, 333333333]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
         assert_eq!(
             cfg.allowed_users,
             vec![111111111_i64, 222222222, 333333333]
@@ -99,6 +117,7 @@ mod tests {
     #[test]
     fn extra_keys_in_config_are_ignored() {
         let toml = r#"
+            token = "test-token"
             allowed_users = [42]
             bot_name = "my-bot"
             log_level = "info"
@@ -109,18 +128,23 @@ mod tests {
 
     #[test]
     fn large_user_ids_are_accepted() {
-        // Telegram user IDs can be up to 10 digits (i64 range is fine).
-        let toml = r#"allowed_users = [9999999999]"#;
-        let cfg = Config::from_toml(toml).expect("should parse");
+        let toml = with_token("allowed_users = [9999999999]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
         assert_eq!(cfg.allowed_users, vec![9_999_999_999_i64]);
     }
 
     #[test]
     fn negative_user_ids_are_accepted() {
-        // Telegram chat/channel IDs are negative; the config must not reject them.
-        let toml = r#"allowed_users = [-100123456789]"#;
-        let cfg = Config::from_toml(toml).expect("should parse");
+        let toml = with_token("allowed_users = [-100123456789]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
         assert_eq!(cfg.allowed_users, vec![-100_123_456_789_i64]);
+    }
+
+    #[test]
+    fn token_is_stored_in_config() {
+        let toml = with_token("allowed_users = [1]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
+        assert_eq!(cfg.token, "test-token");
     }
 
     // ── Parsing: invalid TOML syntax ──────────────────────────────────────────
@@ -137,9 +161,8 @@ mod tests {
 
     #[test]
     fn wrong_value_type_returns_parse_error() {
-        // Strings instead of integers — toml will fail to deserialize into Vec<i64>.
-        let toml = r#"allowed_users = ["alice", "bob"]"#;
-        let err = Config::from_toml(toml).expect_err("should fail");
+        let toml = with_token(r#"allowed_users = ["alice", "bob"]"#);
+        let err = Config::from_toml(&toml).expect_err("should fail");
         assert!(
             matches!(err, ConfigError::ParseError(_)),
             "expected ParseError, got {err:?}"
@@ -147,27 +170,40 @@ mod tests {
     }
 
     #[test]
-    fn completely_empty_toml_returns_missing_whitelist() {
-        let toml = "";
+    fn completely_empty_toml_returns_missing_token() {
+        let err = Config::from_toml("").expect_err("should fail");
+        assert_eq!(err, ConfigError::MissingToken);
+    }
+
+    // ── Parsing: missing `token` key ──────────────────────────────────────────
+
+    #[test]
+    fn missing_token_key_returns_missing_token_error() {
+        let toml = "allowed_users = [1]";
         let err = Config::from_toml(toml).expect_err("should fail");
-        assert_eq!(err, ConfigError::MissingWhitelist);
+        assert_eq!(err, ConfigError::MissingToken);
+    }
+
+    #[test]
+    fn missing_token_error_message_is_descriptive() {
+        let err = Config::from_toml("allowed_users = [1]").expect_err("should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("token"), "error message should mention `token`: {msg}");
     }
 
     // ── Parsing: missing `allowed_users` key ──────────────────────────────────
 
     #[test]
     fn missing_allowed_users_key_returns_missing_whitelist() {
-        let toml = r#"
-            bot_name = "my-bot"
-            log_level = "debug"
-        "#;
+        let toml = r#"token = "t""#;
         let err = Config::from_toml(toml).expect_err("should fail");
         assert_eq!(err, ConfigError::MissingWhitelist);
     }
 
     #[test]
-    fn missing_key_error_message_is_descriptive() {
-        let err = Config::from_toml("").expect_err("should fail");
+    fn missing_allowed_users_error_message_is_descriptive() {
+        let toml = r#"token = "t""#;
+        let err = Config::from_toml(toml).expect_err("should fail");
         let msg = err.to_string();
         assert!(
             msg.contains("allowed_users"),
@@ -179,15 +215,15 @@ mod tests {
 
     #[test]
     fn empty_allowed_users_array_returns_empty_whitelist_error() {
-        let toml = r#"allowed_users = []"#;
-        let err = Config::from_toml(toml).expect_err("should fail");
+        let toml = with_token("allowed_users = []");
+        let err = Config::from_toml(&toml).expect_err("should fail");
         assert_eq!(err, ConfigError::EmptyWhitelist);
     }
 
     #[test]
     fn empty_whitelist_error_message_is_descriptive() {
-        let toml = r#"allowed_users = []"#;
-        let err = Config::from_toml(toml).expect_err("should fail");
+        let toml = with_token("allowed_users = []");
+        let err = Config::from_toml(&toml).expect_err("should fail");
         let msg = err.to_string();
         assert!(
             msg.contains("allowed_users") && msg.contains("empty"),
@@ -200,6 +236,7 @@ mod tests {
     #[test]
     fn known_user_is_allowed() {
         let cfg = Config {
+            token: "t".to_string(),
             allowed_users: vec![111111111, 222222222],
         };
         assert!(cfg.is_allowed(111111111));
@@ -209,6 +246,7 @@ mod tests {
     #[test]
     fn unknown_user_is_not_allowed() {
         let cfg = Config {
+            token: "t".to_string(),
             allowed_users: vec![111111111],
         };
         assert!(!cfg.is_allowed(999999999));
@@ -216,8 +254,8 @@ mod tests {
 
     #[test]
     fn round_trip_parse_then_check_authorization() {
-        let toml = r#"allowed_users = [111111111]"#;
-        let cfg = Config::from_toml(toml).expect("should parse");
+        let toml = with_token("allowed_users = [111111111]");
+        let cfg = Config::from_toml(&toml).expect("should parse");
 
         // BDD: authorized user passes
         assert!(
