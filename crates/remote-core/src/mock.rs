@@ -14,11 +14,15 @@ pub struct MockMediaController {
     next_result: Mutex<Result<(), String>>,
     previous_result: Mutex<Result<(), String>>,
     state_result: Mutex<Result<(MediaStatus, MediaMetadata), String>>,
+    volume_up_result: Mutex<Result<(), String>>,
+    volume_down_result: Mutex<Result<(), String>>,
 
     toggle_calls: AtomicUsize,
     next_calls: AtomicUsize,
     previous_calls: AtomicUsize,
     state_calls: AtomicUsize,
+    volume_up_calls: AtomicUsize,
+    volume_down_calls: AtomicUsize,
 }
 
 impl MockMediaController {
@@ -36,10 +40,14 @@ impl MockMediaController {
                     art_url: None,
                 },
             ))),
+            volume_up_result: Mutex::new(Ok(())),
+            volume_down_result: Mutex::new(Ok(())),
             toggle_calls: AtomicUsize::new(0),
             next_calls: AtomicUsize::new(0),
             previous_calls: AtomicUsize::new(0),
             state_calls: AtomicUsize::new(0),
+            volume_up_calls: AtomicUsize::new(0),
+            volume_down_calls: AtomicUsize::new(0),
         }
     }
 
@@ -59,6 +67,14 @@ impl MockMediaController {
         *self.state_result.lock().unwrap() = result;
     }
 
+    pub fn set_volume_up_result(&self, result: Result<(), String>) {
+        *self.volume_up_result.lock().unwrap() = result;
+    }
+
+    pub fn set_volume_down_result(&self, result: Result<(), String>) {
+        *self.volume_down_result.lock().unwrap() = result;
+    }
+
     pub fn toggle_call_count(&self) -> usize {
         self.toggle_calls.load(Ordering::SeqCst)
     }
@@ -73,6 +89,14 @@ impl MockMediaController {
 
     pub fn state_call_count(&self) -> usize {
         self.state_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn volume_up_call_count(&self) -> usize {
+        self.volume_up_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn volume_down_call_count(&self) -> usize {
+        self.volume_down_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -101,6 +125,16 @@ impl MediaController for MockMediaController {
     fn get_current_state(&self) -> Result<(MediaStatus, MediaMetadata), String> {
         self.state_calls.fetch_add(1, Ordering::SeqCst);
         self.state_result.lock().unwrap().clone()
+    }
+
+    fn volume_up(&self) -> Result<(), String> {
+        self.volume_up_calls.fetch_add(1, Ordering::SeqCst);
+        self.volume_up_result.lock().unwrap().clone()
+    }
+
+    fn volume_down(&self) -> Result<(), String> {
+        self.volume_down_calls.fetch_add(1, Ordering::SeqCst);
+        self.volume_down_result.lock().unwrap().clone()
     }
 }
 
@@ -281,5 +315,77 @@ mod tests {
     fn mock_satisfies_send_sync_bounds() {
         fn assert_send_sync<T: Send + Sync + 'static>() {}
         assert_send_sync::<MockMediaController>();
+    }
+
+    // ── Volume ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn new_mock_volume_up_returns_ok_by_default() {
+        let mock = MockMediaController::new();
+        assert_eq!(mock.volume_up(), Ok(()));
+    }
+
+    #[test]
+    fn new_mock_volume_down_returns_ok_by_default() {
+        let mock = MockMediaController::new();
+        assert_eq!(mock.volume_down(), Ok(()));
+    }
+
+    #[test]
+    fn new_mock_has_zero_volume_call_counts() {
+        let mock = MockMediaController::new();
+        assert_eq!(mock.volume_up_call_count(), 0);
+        assert_eq!(mock.volume_down_call_count(), 0);
+    }
+
+    #[test]
+    fn volume_up_can_be_configured_to_return_error() {
+        let mock = MockMediaController::new();
+        mock.set_volume_up_result(Err("No players found".to_string()));
+        assert_eq!(mock.volume_up(), Err("No players found".to_string()));
+    }
+
+    #[test]
+    fn volume_down_can_be_configured_to_return_error() {
+        let mock = MockMediaController::new();
+        mock.set_volume_down_result(Err("No players found".to_string()));
+        assert_eq!(mock.volume_down(), Err("No players found".to_string()));
+    }
+
+    #[test]
+    fn volume_up_call_count_increments_on_each_call() {
+        let mock = MockMediaController::new();
+        mock.volume_up().ok();
+        mock.volume_up().ok();
+        assert_eq!(mock.volume_up_call_count(), 2);
+    }
+
+    #[test]
+    fn volume_down_call_count_increments_on_each_call() {
+        let mock = MockMediaController::new();
+        mock.volume_down().ok();
+        assert_eq!(mock.volume_down_call_count(), 1);
+    }
+
+    #[test]
+    fn volume_call_counts_are_independent_of_other_methods() {
+        let mock = MockMediaController::new();
+        mock.volume_up().ok();
+        mock.volume_up().ok();
+        mock.volume_down().ok();
+        assert_eq!(mock.volume_up_call_count(), 2);
+        assert_eq!(mock.volume_down_call_count(), 1);
+        assert_eq!(mock.toggle_call_count(), 0);
+        assert_eq!(mock.next_call_count(), 0);
+        assert_eq!(mock.previous_call_count(), 0);
+    }
+
+    #[test]
+    fn volume_count_increments_even_on_error() {
+        let mock = MockMediaController::new();
+        mock.set_volume_up_result(Err("err".to_string()));
+        mock.volume_up().ok();
+        mock.volume_up().ok();
+        assert_eq!(mock.volume_up_call_count(), 2);
     }
 }

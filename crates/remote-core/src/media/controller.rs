@@ -14,4 +14,8 @@ pub trait MediaController: Send + Sync + 'static {
     fn previous(&self) -> Result<(), String>;
     /// Return the current playback status and track metadata.
     fn get_current_state(&self) -> Result<(MediaStatus, MediaMetadata), String>;
+    /// Increase volume by one step (5%).
+    fn volume_up(&self) -> Result<(), String>;
+    /// Decrease volume by one step (5%).
+    fn volume_down(&self) -> Result<(), String>;
 }

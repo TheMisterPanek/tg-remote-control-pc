@@ -8,7 +8,7 @@ use remote_core::bot::dispatch::{dispatch, DispatchResult};
 use remote_core::bot::ui::InlineKeyboard;
 use remote_core::config::Config;
 use remote_core::media::controller::MediaController;
-use remote_os::playerctl::PlayerctlController;
+use remote_os::dbus::DbusController;
 
 use teloxide::dispatching::UpdateHandler;
 use teloxide::prelude::*;
@@ -32,7 +32,7 @@ async fn main() {
 
     let bot = Bot::new(config.token.clone());
     let config: Arc<Config> = Arc::new(config);
-    let controller: Arc<dyn MediaController> = Arc::new(PlayerctlController::new());
+    let controller: Arc<dyn MediaController> = Arc::new(DbusController::new());
 
     println!("tg-media-remote: bot started, polling for updates…");
 
@@ -52,12 +52,16 @@ fn schema() -> UpdateHandler<Err> {
 }
 
 fn to_teloxide_keyboard(kb: &InlineKeyboard) -> InlineKeyboardMarkup {
-    let row: Vec<InlineKeyboardButton> = kb
-        .buttons
+    let rows: Vec<Vec<InlineKeyboardButton>> = kb
+        .rows
         .iter()
-        .map(|b| InlineKeyboardButton::callback(b.label.clone(), b.callback_data.clone()))
+        .map(|row| {
+            row.iter()
+                .map(|b| InlineKeyboardButton::callback(b.label.clone(), b.callback_data.clone()))
+                .collect()
+        })
         .collect();
-    InlineKeyboardMarkup::new(vec![row])
+    InlineKeyboardMarkup::new(rows)
 }
 
 async fn on_message(

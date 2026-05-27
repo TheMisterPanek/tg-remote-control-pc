@@ -75,6 +75,8 @@ pub(crate) fn dispatch_callback_action(
         CallbackAction::TogglePlayPause => controller.toggle_play_pause().map(|_| ()),
         CallbackAction::Next => controller.next(),
         CallbackAction::Previous => controller.previous(),
+        CallbackAction::VolumeUp => controller.volume_up(),
+        CallbackAction::VolumeDown => controller.volume_down(),
     };
     if let Err(msg) = action_result {
         return DispatchResult::Reply(format!("Error: {msg}"));

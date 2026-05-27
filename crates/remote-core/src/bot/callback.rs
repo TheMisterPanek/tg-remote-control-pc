@@ -7,6 +7,8 @@ use crate::media::controller::MediaController;
 pub const CALLBACK_TOGGLE: &str = "toggle";
 pub const CALLBACK_NEXT: &str = "next";
 pub const CALLBACK_PREV: &str = "prev";
+pub const CALLBACK_VOL_UP: &str = "vol_up";
+pub const CALLBACK_VOL_DOWN: &str = "vol_down";
 
 // ── CallbackAction ────────────────────────────────────────────────────────────
 
@@ -15,6 +17,8 @@ pub enum CallbackAction {
     TogglePlayPause,
     Next,
     Previous,
+    VolumeUp,
+    VolumeDown,
 }
 
 impl CallbackAction {
@@ -23,6 +27,8 @@ impl CallbackAction {
             CALLBACK_TOGGLE => Some(Self::TogglePlayPause),
             CALLBACK_NEXT => Some(Self::Next),
             CALLBACK_PREV => Some(Self::Previous),
+            CALLBACK_VOL_UP => Some(Self::VolumeUp),
+            CALLBACK_VOL_DOWN => Some(Self::VolumeDown),
             _ => None,
         }
     }
@@ -32,6 +38,8 @@ impl CallbackAction {
             Self::TogglePlayPause => CALLBACK_TOGGLE,
             Self::Next => CALLBACK_NEXT,
             Self::Previous => CALLBACK_PREV,
+            Self::VolumeUp => CALLBACK_VOL_UP,
+            Self::VolumeDown => CALLBACK_VOL_DOWN,
         }
     }
 }
@@ -113,6 +121,24 @@ mod tests {
     }
 
     #[test]
+    fn volume_up_callback_data_round_trips() {
+        assert_eq!(
+            CallbackAction::from_callback_data("vol_up"),
+            Some(CallbackAction::VolumeUp)
+        );
+        assert_eq!(CallbackAction::VolumeUp.to_callback_data(), "vol_up");
+    }
+
+    #[test]
+    fn volume_down_callback_data_round_trips() {
+        assert_eq!(
+            CallbackAction::from_callback_data("vol_down"),
+            Some(CallbackAction::VolumeDown)
+        );
+        assert_eq!(CallbackAction::VolumeDown.to_callback_data(), "vol_down");
+    }
+
+    #[test]
     fn unknown_callback_data_returns_none() {
         assert_eq!(CallbackAction::from_callback_data("garbage"), None);
         assert_eq!(CallbackAction::from_callback_data(""), None);
@@ -150,6 +176,26 @@ mod tests {
         assert_eq!(m.next_call_count(), 0);
     }
 
+    #[test]
+    fn vol_up_callback_invokes_volume_up_exactly_once() {
+        let cfg = cfg(vec![1]);
+        let m = mock_with_state(MediaStatus::Playing);
+        dispatch_callback(1, "vol_up", &cfg, &m);
+        assert_eq!(m.volume_up_call_count(), 1);
+        assert_eq!(m.volume_down_call_count(), 0);
+        assert_eq!(m.toggle_call_count(), 0);
+    }
+
+    #[test]
+    fn vol_down_callback_invokes_volume_down_exactly_once() {
+        let cfg = cfg(vec![1]);
+        let m = mock_with_state(MediaStatus::Playing);
+        dispatch_callback(1, "vol_down", &cfg, &m);
+        assert_eq!(m.volume_down_call_count(), 1);
+        assert_eq!(m.volume_up_call_count(), 0);
+        assert_eq!(m.toggle_call_count(), 0);
+    }
+
     // ── Return type ────────────────────────────────────────────────────────────
 
     #[test]
@@ -174,6 +220,44 @@ mod tests {
         let m = mock_with_state(MediaStatus::Playing);
         let result = dispatch_callback(1, "prev", &cfg, &m);
         assert!(matches!(result, DispatchResult::PlayerReply(_)));
+    }
+
+    #[test]
+    fn vol_up_callback_returns_player_reply() {
+        let cfg = cfg(vec![1]);
+        let m = mock_with_state(MediaStatus::Playing);
+        let result = dispatch_callback(1, "vol_up", &cfg, &m);
+        assert!(matches!(result, DispatchResult::PlayerReply(_)));
+    }
+
+    #[test]
+    fn vol_down_callback_returns_player_reply() {
+        let cfg = cfg(vec![1]);
+        let m = mock_with_state(MediaStatus::Playing);
+        let result = dispatch_callback(1, "vol_down", &cfg, &m);
+        assert!(matches!(result, DispatchResult::PlayerReply(_)));
+    }
+
+    #[test]
+    fn vol_up_controller_error_surfaced_as_reply() {
+        let cfg = cfg(vec![1]);
+        let m = MockMediaController::new();
+        m.set_volume_up_result(Err("No players found".to_string()));
+        let DispatchResult::Reply(text) = dispatch_callback(1, "vol_up", &cfg, &m) else {
+            panic!("expected Reply");
+        };
+        assert!(text.contains("No players found"), "text was: {text}");
+    }
+
+    #[test]
+    fn vol_down_controller_error_surfaced_as_reply() {
+        let cfg = cfg(vec![1]);
+        let m = MockMediaController::new();
+        m.set_volume_down_result(Err("No players found".to_string()));
+        let DispatchResult::Reply(text) = dispatch_callback(1, "vol_down", &cfg, &m) else {
+            panic!("expected Reply");
+        };
+        assert!(text.contains("No players found"), "text was: {text}");
     }
 
     // ── State transitions ──────────────────────────────────────────────────────
